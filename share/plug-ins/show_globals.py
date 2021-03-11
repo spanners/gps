@@ -10,7 +10,6 @@ import os
 import GPS
 from gs_utils import in_ada_file, interactive
 import libadalang as lal
-from lal_utils import node
 import os_utils
 
 
@@ -60,13 +59,22 @@ def reset_state(buffer, file):
         mark.delete()
 
 
-def get_subp_decl(file, line, column):
+def get_subp_decl(buf, line, column):
     """ Return the subprogram declaration node at line, column.
     Return None if none is found.
     """
+    unit = buf.get_analysis_unit()
+    decl = unit.root.find(lambda x: x.sloc_range.start.line == line and
+                          x.sloc_range.start.column == column and
+                          isinstance (x, (lal.SubpSpec, lal.SingleTaskDecl,
+                                          lal.TaskTypeDecl, lal.EntryDecl)))
 
-    decl = node(file, line, column, 'SubpSpec')
-    return decl.parent
+    # If (line, col) points to a Subprogram Specification, return its parent
+    if decl and isinstance(decl, lal.SubpSpec):
+        return decl.parent
+    # Else (line,col) may point to a Task or Protected Entry
+    else:
+        return decl
 
 
 def has_aspects(subp_decl_node):
@@ -78,14 +86,14 @@ def has_aspects(subp_decl_node):
 def get_aspect_line(line, subp_decl_node):
     """ Get the line number at which the final aspect is, or should go. """
 
-    # If it's an expression function, obtain the line number where it ends
-    # (including any aspects that follow) and return that line number.
-    if isinstance(subp_decl_node, lal.ExprFunction):
-        return int(subp_decl_node.sloc_range.end.line)
-
     # If there are already aspects, return the line where the aspect list ends
     if has_aspects(subp_decl_node):
         return int(subp_decl_node.f_aspects.sloc_range.end.line)
+
+    # If it's an expression function, task, or entry, return where it ends
+    if isinstance(subp_decl_node, (lal.ExprFunction, lal.SingleTaskDecl,
+                                   lal.TaskTypeDecl, lal.EntryDecl)):
+        return int(subp_decl_node.sloc_range.end.line)
 
     subp_spec = subp_decl_node.f_subp_spec
 
@@ -132,7 +140,7 @@ def edit_file(file, json_name):
                 if aspect == u'Refined_Global':
                     continue
 
-                subp_node = get_subp_decl(file, sloc_line, sloc_column)
+                subp_node = get_subp_decl(buffer, sloc_line, sloc_column)
 
                 insert_line = get_aspect_line(sloc_line, subp_node) + 1
 
